@@ -392,5 +392,32 @@ namespace Jellyfin.Api.Controllers
             _syncPlayManager.HandleRequest(currentSession, syncPlayRequest, CancellationToken.None);
             return NoContent();
         }
+
+        /// <summary>
+        /// Request related to WebRTC signaling in SyncPlay group.
+        /// </summary>
+        /// <param name="to">The id of the session to whom to send the message.</param>
+        /// <param name="newSession">Whether this is a new-session message.</param>
+        /// <param name="sessionLeaving">Whether this is a session-leaving message.</param>
+        /// <param name="iceCandidate">The ICE candidate as a string.</param>
+        /// <param name="offer">The WebRTC offer as a string.</param>
+        /// <param name="answer">The WebRTC answer as a string.</param>
+        /// <response code="204">Message has been forwarded.</response>
+        /// <returns>A <see cref="NoContentResult"/> indicating success.</returns>
+        [HttpPost("WebRTC")]
+        [ProducesResponseType(StatusCodes.Status204NoContent)]
+        public ActionResult SyncPlayWebRTC(
+            [FromQuery] string? to,
+            [FromQuery] bool? newSession,
+            [FromQuery] bool? sessionLeaving,
+            [FromQuery] string? iceCandidate,
+            [FromQuery] string? offer,
+            [FromQuery] string? answer)
+        {
+            var currentSession = RequestHelpers.GetSession(_sessionManager, _authorizationContext, Request);
+            var syncPlayRequest = new WebRTCGroupRequest(to, newSession ?? false, sessionLeaving ?? false, iceCandidate, offer, answer);
+            _syncPlayManager.HandleWebRTC(currentSession, syncPlayRequest, CancellationToken.None);
+            return NoContent();
+        }
     }
 }

@@ -70,6 +70,14 @@ namespace MediaBrowser.Controller.SyncPlay
         void HandleRequest(SessionInfo session, IGroupPlaybackRequest request, CancellationToken cancellationToken);
 
         /// <summary>
+        /// Handles a WebRTC related message sent by a session.
+        /// </summary>
+        /// <param name="session">The session.</param>
+        /// <param name="request">The requested action.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        void HandleWebRTC(SessionInfo session, WebRTCGroupRequest request, CancellationToken cancellationToken);
+
+        /// <summary>
         /// Gets the info about the group for the clients.
         /// </summary>
         /// <returns>The group info for the clients.</returns>

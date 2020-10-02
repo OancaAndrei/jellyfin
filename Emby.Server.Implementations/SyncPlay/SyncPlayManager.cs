@@ -279,6 +279,36 @@ namespace Emby.Server.Implementations.SyncPlay
             }
         }
 
+        /// <inheritdoc />
+        public void HandleWebRTC(SessionInfo session, WebRTCGroupRequest request, CancellationToken cancellationToken)
+        {
+            var user = _userManager.GetUserById(session.UserId);
+            if (user.SyncPlayAccess == SyncPlayAccess.None)
+            {
+                _logger.LogWarning("Session {SessionId} does not have access to SyncPlay.", session.Id);
+
+                var error = new GroupUpdate<string>(Guid.Empty, GroupUpdateType.JoinGroupDenied, string.Empty);
+                _sessionManager.SendSyncPlayGroupUpdate(session, error, CancellationToken.None);
+                return;
+            }
+
+            lock (_groupsLock)
+            {
+                _sessionToGroupMap.TryGetValue(session.Id, out var group);
+
+                if (group == null)
+                {
+                    _logger.LogWarning("Session {SessionId} does not belong to any group.", session.Id);
+
+                    var error = new GroupUpdate<string>(Guid.Empty, GroupUpdateType.NotInGroup, string.Empty);
+                    _sessionManager.SendSyncPlayGroupUpdate(session, error, CancellationToken.None);
+                    return;
+                }
+
+                group.HandleWebRTC(session, request, cancellationToken);
+            }
+        }
+
         /// <summary>
         /// Releases unmanaged and optionally managed resources.
         /// </summary>

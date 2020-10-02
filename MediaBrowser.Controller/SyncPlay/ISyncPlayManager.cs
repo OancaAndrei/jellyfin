@@ -49,5 +49,13 @@ namespace MediaBrowser.Controller.SyncPlay
         /// <param name="request">The request.</param>
         /// <param name="cancellationToken">The cancellation token.</param>
         void HandleRequest(SessionInfo session, IGroupPlaybackRequest request, CancellationToken cancellationToken);
+
+        /// <summary>
+        /// Handle a WebRTC related message sent by a session.
+        /// </summary>
+        /// <param name="session">The session.</param>
+        /// <param name="request">The requested action.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        void HandleWebRTC(SessionInfo session, WebRTCGroupRequest request, CancellationToken cancellationToken);
     }
 }
