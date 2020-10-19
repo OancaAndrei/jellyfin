@@ -57,6 +57,16 @@ namespace Emby.Server.Implementations.SyncPlay
             new Dictionary<string, GroupMember>(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
+        /// The group access list.
+        /// </summary>
+        private readonly GroupAccessList _accessList;
+
+        /// <summary>
+        /// The list of invited users.
+        /// </summary>
+        private List<Guid> _invitedUsers;
+
+        /// <summary>
         /// The internal group state.
         /// </summary>
         private IGroupState _state;
@@ -81,6 +91,8 @@ namespace Emby.Server.Implementations.SyncPlay
             _logger = loggerFactory.CreateLogger<GroupController>();
 
             _state = new IdleGroupState(loggerFactory);
+            _accessList = new GroupAccessList();
+            _invitedUsers = new List<Guid>();
         }
 
         /// <summary>
@@ -112,6 +124,12 @@ namespace Emby.Server.Implementations.SyncPlay
         /// </summary>
         /// <value>The group name.</value>
         public string GroupName { get; private set; }
+
+        /// <summary>
+        /// Gets the group visibility type.
+        /// </summary>
+        /// <value>The group visibility.</value>
+        public GroupVisibilityType Visibility { get; private set; }
 
         /// <summary>
         /// Gets the group identifier.
@@ -150,6 +168,9 @@ namespace Emby.Server.Implementations.SyncPlay
                     Ping = DefaultPing,
                     IsBuffering = false
                 });
+
+            // Set permissions if this is a new user
+            _accessList.TouchPermissions(session.UserId);
         }
 
         /// <summary>
@@ -159,6 +180,26 @@ namespace Emby.Server.Implementations.SyncPlay
         private void RemoveSession(SessionInfo session)
         {
             _participants.Remove(session.Id);
+
+            // Preserve permissions of invited users.
+            if (!_invitedUsers.Contains(session.UserId))
+            {
+                // Clear only when all sessions of same user left.
+                var clearUser = true;
+                foreach (var participant in _participants.Values)
+                {
+                    if (participant.Session.UserId.Equals(session.UserId))
+                    {
+                        clearUser = false;
+                        break;
+                    }
+                }
+
+                if (clearUser)
+                {
+                    _accessList.ClearPermissions(session.UserId);
+                }
+            }
         }
 
         /// <summary>
@@ -256,9 +297,40 @@ namespace Emby.Server.Implementations.SyncPlay
         public bool IsGroupEmpty() => _participants.Count == 0;
 
         /// <inheritdoc />
+        public bool CanUserJoin(Guid userId)
+        {
+            if (_accessList.IsAdministrator(userId))
+            {
+                return true;
+            }
+            else if (Visibility.Equals(GroupVisibilityType.Public))
+            {
+                return true;
+            }
+            else if (Visibility.Equals(GroupVisibilityType.InviteOnly))
+            {
+                return _invitedUsers.Contains(userId);
+            }
+
+            return false;
+        }
+
+        /// <inheritdoc />
         public void CreateGroup(SessionInfo session, NewGroupRequest request, CancellationToken cancellationToken)
         {
+            // Setup settings and access list
             GroupName = request.GroupName;
+            Visibility = request.Visibility ?? GroupVisibilityType.Public;
+            if (Visibility.Equals(GroupVisibilityType.InviteOnly))
+            {
+                _invitedUsers = request.InvitedUsers?.ToList() ?? _invitedUsers;
+            }
+
+            _accessList.AddAdministrator(session.UserId);
+            _accessList.OpenPlaybackAccess = request.OpenPlaybackAccess ?? true;
+            _accessList.OpenPlaylistAccess = request.OpenPlaylistAccess ?? true;
+
+            // Add session to group
             AddSession(session);
 
             var sessionIsPlayingAnItem = session.FullNowPlayingItem != null;
@@ -291,12 +363,57 @@ namespace Emby.Server.Implementations.SyncPlay
         }
 
         /// <inheritdoc />
+        public void UpdateSettings(SessionInfo session, UpdateGroupSettingsRequest request, CancellationToken cancellationToken)
+        {
+            if (!_accessList.IsAdministrator(session.UserId))
+            {
+                _logger.LogInformation("Session {SessionId} is not an administrator of group {GroupId}.", session.Id, GroupId.ToString());
+                return;
+            }
+
+            GroupName = request.GroupName ?? GroupName;
+            Visibility = request.Visibility ?? Visibility;
+            _invitedUsers = request.InvitedUsers?.ToList() ?? _invitedUsers;
+            _accessList.OpenPlaybackAccess = request.OpenPlaybackAccess ?? _accessList.OpenPlaybackAccess;
+            _accessList.OpenPlaylistAccess = request.OpenPlaylistAccess ?? _accessList.OpenPlaylistAccess;
+
+            // Update access list for given users
+            var userIds = request.AccessListUserIds;
+            var playbackAccessList = request.AccessListPlayback;
+            var playlistAccessList = request.AccessListPlaylist;
+            if (userIds != null && playbackAccessList != null && playlistAccessList != null)
+            {
+                // Make sure arrays have same length
+                if (userIds.Count == playbackAccessList.Count && userIds.Count == playlistAccessList.Count)
+                {
+                    for (var i = 0; i < userIds.Count; i++)
+                    {
+                        _accessList.SetPermissions(userIds[i], playbackAccessList[i], playlistAccessList[i]);
+                    }
+                }
+            }
+
+            var groupUpdate = NewSyncPlayGroupUpdate(GroupUpdateType.GroupUpdate, GetInfo());
+            SendGroupUpdate(session, SyncPlayBroadcastType.AllGroup, groupUpdate, cancellationToken);
+
+            _logger.LogInformation("Session {SessionId} updated the settings of group {GroupId}.", session.Id, GroupId.ToString());
+        }
+
+        /// <inheritdoc />
         public void SessionJoin(SessionInfo session, JoinGroupRequest request, CancellationToken cancellationToken)
         {
+            if (!CanUserJoin(session.UserId))
+            {
+                return;
+            }
+
             AddSession(session);
 
             var updateSession = NewSyncPlayGroupUpdate(GroupUpdateType.GroupJoined, GetInfo());
             SendGroupUpdate(session, SyncPlayBroadcastType.CurrentSession, updateSession, cancellationToken);
+
+            var groupUpdate = NewSyncPlayGroupUpdate(GroupUpdateType.GroupUpdate, GetInfo());
+            SendGroupUpdate(session, SyncPlayBroadcastType.AllExceptCurrentSession, groupUpdate, cancellationToken);
 
             var updateOthers = NewSyncPlayGroupUpdate(GroupUpdateType.UserJoined, session.UserName);
             SendGroupUpdate(session, SyncPlayBroadcastType.AllExceptCurrentSession, updateOthers, cancellationToken);
@@ -311,6 +428,9 @@ namespace Emby.Server.Implementations.SyncPlay
         {
             var updateSession = NewSyncPlayGroupUpdate(GroupUpdateType.GroupJoined, GetInfo());
             SendGroupUpdate(session, SyncPlayBroadcastType.CurrentSession, updateSession, cancellationToken);
+
+            var groupUpdate = NewSyncPlayGroupUpdate(GroupUpdateType.GroupUpdate, GetInfo());
+            SendGroupUpdate(session, SyncPlayBroadcastType.AllExceptCurrentSession, groupUpdate, cancellationToken);
 
             var updateOthers = NewSyncPlayGroupUpdate(GroupUpdateType.UserJoined, session.UserName);
             SendGroupUpdate(session, SyncPlayBroadcastType.AllExceptCurrentSession, updateOthers, cancellationToken);
@@ -327,13 +447,16 @@ namespace Emby.Server.Implementations.SyncPlay
 
             // Notify WebRTC peers
             var webRTCUpdate = new WebRTCUpdate(session.Id, false, true, string.Empty, string.Empty, string.Empty);
-            var groupUpdate = NewSyncPlayGroupUpdate(GroupUpdateType.WebRTC, webRTCUpdate);
-            SendGroupUpdate(session, SyncPlayBroadcastType.AllExceptCurrentSession, groupUpdate, cancellationToken);
+            var webRTCGroupUpdate = NewSyncPlayGroupUpdate(GroupUpdateType.WebRTC, webRTCUpdate);
+            SendGroupUpdate(session, SyncPlayBroadcastType.AllExceptCurrentSession, webRTCGroupUpdate, cancellationToken);
 
             RemoveSession(session);
 
             var updateSession = NewSyncPlayGroupUpdate(GroupUpdateType.GroupLeft, GroupId.ToString());
             SendGroupUpdate(session, SyncPlayBroadcastType.CurrentSession, updateSession, cancellationToken);
+
+            var groupUpdate = NewSyncPlayGroupUpdate(GroupUpdateType.GroupUpdate, GetInfo());
+            SendGroupUpdate(session, SyncPlayBroadcastType.AllExceptCurrentSession, groupUpdate, cancellationToken);
 
             var updateOthers = NewSyncPlayGroupUpdate(GroupUpdateType.UserLeft, session.UserName);
             SendGroupUpdate(session, SyncPlayBroadcastType.AllExceptCurrentSession, updateOthers, cancellationToken);
@@ -344,6 +467,13 @@ namespace Emby.Server.Implementations.SyncPlay
         /// <inheritdoc />
         public void HandleRequest(SessionInfo session, IGroupPlaybackRequest request, CancellationToken cancellationToken)
         {
+            if (!_accessList.CheckRequest(session, request))
+            {
+                // User is not allowed to make this request.
+                _logger.LogInformation("Rejecting {RequestType} requested by session {SessionId} in group {GroupId}.", request.Type, session.Id, GroupId.ToString());
+                return;
+            }
+
             // The server's job is to maintain a consistent state for clients to reference
             // and notify clients of state changes. The actual syncing of media playback
             // happens client side. Clients are aware of the server's time and use it to sync.
@@ -354,8 +484,23 @@ namespace Emby.Server.Implementations.SyncPlay
         /// <inheritdoc />
         public GroupInfoDto GetInfo()
         {
-            var participants = _participants.Values.Select(session => session.Session.UserName).Distinct().ToList();
-            return new GroupInfoDto(GroupId, GroupName, _state.Type, participants, DateTime.UtcNow);
+            var participants = _participants.Values.Select(session => session.Session.Id).Distinct();
+            var userIds = participants.Select(sessionId => _participants[sessionId].Session.UserId);
+            var userNames = participants.Select(sessionId => _participants[sessionId].Session.UserName);
+
+            return new GroupInfoDto(
+                GroupId,
+                GroupName,
+                Visibility,
+                _invitedUsers,
+                _accessList.GetAdministrators(),
+                _accessList.OpenPlaybackAccess,
+                _accessList.OpenPlaylistAccess,
+                _state.Type,
+                userIds.ToList(),
+                userNames.ToList(),
+                _accessList.GetAccessList(),
+                DateTime.UtcNow);
         }
 
         /// <inheritdoc />

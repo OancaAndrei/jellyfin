@@ -154,6 +154,15 @@ namespace Emby.Server.Implementations.SyncPlay
                     // Group lock required to let other requests end first.
                     lock (group)
                     {
+                        if (!group.CanUserJoin(session.UserId))
+                        {
+                            _logger.LogWarning("Session {SessionId} cannot join group {GroupId}.", session.Id, groupId);
+
+                            var error = new GroupUpdate<string>(group.GroupId, GroupUpdateType.JoinGroupDenied, string.Empty);
+                            _sessionManager.SendSyncPlayGroupUpdate(session, error, CancellationToken.None);
+                            return;
+                        }
+
                         if (!group.HasAccessToPlayQueue(user))
                         {
                             _logger.LogWarning("Session {SessionId} tried to join group {GroupId} but does not have access to some content of the playing queue.", session.Id, group.GroupId.ToString());
@@ -223,6 +232,26 @@ namespace Emby.Server.Implementations.SyncPlay
         }
 
         /// <inheritdoc />
+        public void UpdateGroupSettings(SessionInfo session, UpdateGroupSettingsRequest request, CancellationToken cancellationToken)
+        {
+            var group = FindJoinedGroup(session);
+            if (group == null)
+            {
+                _logger.LogWarning("Session {SessionId} does not belong to any group.", session.Id);
+
+                var error = new GroupUpdate<string>(Guid.Empty, GroupUpdateType.NotInGroup, string.Empty);
+                _sessionManager.SendSyncPlayGroupUpdate(session, error, CancellationToken.None);
+                return;
+            }
+
+            // Group lock required as GroupController is not thread-safe.
+            lock (group)
+            {
+                group.UpdateSettings(session, request, cancellationToken);
+            }
+        }
+
+        /// <inheritdoc />
         public List<GroupInfoDto> ListGroups(SessionInfo session)
         {
             // TODO: create abstract class for GroupRequests to avoid explicit request type here.
@@ -242,7 +271,7 @@ namespace Emby.Server.Implementations.SyncPlay
                     // Locking required as group is not thread-safe.
                     lock (group)
                     {
-                        if (group.HasAccessToPlayQueue(user))
+                        if (group.CanUserJoin(session.UserId) && group.HasAccessToPlayQueue(user))
                         {
                             list.Add(group.GetInfo());
                         }
@@ -251,6 +280,24 @@ namespace Emby.Server.Implementations.SyncPlay
             }
 
             return list;
+        }
+
+        /// <inheritdoc />
+        public List<UserInfoDto> ListAvailableUsers(SessionInfo session)
+        {
+            var user = _userManager.GetUserById(session.UserId);
+
+            if (user.SyncPlayAccess == SyncPlayAccess.None)
+            {
+                return new List<UserInfoDto>();
+            }
+
+            // TODO: should additional filters exist for privacy?
+            return _userManager
+                .Users
+                .Where(user => !user.SyncPlayAccess.Equals(SyncPlayAccess.None))
+                .Select(user => new UserInfoDto(user.Id, user.Username))
+                .ToList();
         }
 
         /// <inheritdoc />

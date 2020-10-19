@@ -31,12 +31,27 @@ namespace MediaBrowser.Controller.SyncPlay
         bool IsGroupEmpty();
 
         /// <summary>
+        /// Checks if a user can join the group, whether because it's a public group or because invited.
+        /// </summary>
+        /// <param name="userId">The user identifier.</param>
+        /// <returns><c>true</c> if the user can join the group; <c>false</c> otherwise.</returns>
+        bool CanUserJoin(Guid userId);
+
+        /// <summary>
         /// Initializes the group with the session's info.
         /// </summary>
         /// <param name="session">The session.</param>
         /// <param name="request">The request.</param>
         /// <param name="cancellationToken">The cancellation token.</param>
         void CreateGroup(SessionInfo session, NewGroupRequest request, CancellationToken cancellationToken);
+
+        /// <summary>
+        /// Updates the group's settings.
+        /// </summary>
+        /// <param name="session">The session.</param>
+        /// <param name="request">The request.</param>
+        /// <param name="cancellationToken">The cancellation token.</param>
+        void UpdateSettings(SessionInfo session, UpdateGroupSettingsRequest request, CancellationToken cancellationToken);
 
         /// <summary>
         /// Adds the session to the group.
