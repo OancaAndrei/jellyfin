@@ -1418,6 +1418,26 @@ namespace Emby.Server.Implementations.Session
             return AuthenticateNewSessionInternal(request, false);
         }
 
+        /// <inheritdoc />
+        public Task<AuthenticationResult> ForkSession(
+            AuthenticationRequest request,
+            string token,
+            string deviceId,
+            string remoteEndPoint)
+        {
+            var parentSession = this.GetSessionByAuthenticationToken(token, deviceId, remoteEndPoint);
+            if (parentSession != null)
+            {
+                request.UserId = parentSession.UserId;
+            }
+            else
+            {
+                throw new AuthenticationException("Invalid access token or device identifier provided.");
+            }
+
+            return AuthenticateNewSessionInternal(request, false);
+        }
+
         public Task<AuthenticationResult> AuthenticateQuickConnect(AuthenticationRequest request, string token)
         {
             var result = _authRepo.Get(new AuthenticationInfoQuery()

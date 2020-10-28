@@ -252,6 +252,43 @@ namespace Jellyfin.Api.Controllers
         }
 
         /// <summary>
+        /// Creates a new session from a given existing session.
+        /// </summary>
+        /// <param name="request">The <see cref="ForkSessionDto"/> request.</param>
+        /// <response code="200">New session created.</response>
+        /// <response code="400">Session not found.</response>
+        /// <returns>A <see cref="Task"/> containing an <see cref="AuthenticationRequest"/> with information about the new session.</returns>
+        [HttpPost("ForkSession")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        public async Task<ActionResult<AuthenticationResult>> ForkSession(
+            [FromBody, Required] ForkSessionDto request)
+        {
+            var auth = _authContext.GetAuthorizationInfo(Request);
+
+            try
+            {
+                var authRequest = new AuthenticationRequest
+                {
+                    App = auth.Client,
+                    AppVersion = auth.Version,
+                    DeviceId = auth.DeviceId,
+                    DeviceName = auth.Device,
+                };
+
+                return await _sessionManager.ForkSession(
+                    authRequest,
+                    request.AccessToken,
+                    request.DeviceId,
+                    HttpContext.GetNormalizedRemoteIp()).ConfigureAwait(false);
+            }
+            catch (SecurityException e)
+            {
+                // rethrow adding IP address to message
+                throw new SecurityException($"[{HttpContext.GetNormalizedRemoteIp()}] {e.Message}", e);
+            }
+        }
+
+        /// <summary>
         /// Updates a user's password.
         /// </summary>
         /// <param name="userId">The user id.</param>

@@ -282,6 +282,16 @@ namespace MediaBrowser.Controller.Session
         Task<AuthenticationResult> CreateNewSession(AuthenticationRequest request);
 
         /// <summary>
+        /// Creates a new session from the given access token.
+        /// </summary>
+        /// <param name="request">The request.</param>
+        /// <param name="accessToken">The parent access token.</param>
+        /// <param name="deviceId">The parent device.</param>
+        /// <param name="remoteEndPoint">The remote end point.</param>
+        /// <returns>Task{SessionInfo}.</returns>
+        Task<AuthenticationResult> ForkSession(AuthenticationRequest request, string accessToken, string deviceId, string remoteEndPoint);
+
+        /// <summary>
         /// Reports the capabilities.
         /// </summary>
         /// <param name="sessionId">The session identifier.</param>
